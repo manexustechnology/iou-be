@@ -1,15 +1,10 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { randomUUID } from 'crypto';
 import { partyClient } from '../canton/client';
+import { getActingParty, resolveQueryParty } from '../middleware/auth';
 
 const router = Router();
 const TEMPLATE_TRANSFER = '#daml-example:Apps.Iou:IouTransfer';
-
-function getActingParty(req: Request): string {
-  const party = req.headers['x-acting-party'] as string | undefined;
-  if (!party) throw new Error('Missing x-acting-party header');
-  return party;
-}
 
 function parseNdjson(raw: string): unknown[] {
   return raw
@@ -30,14 +25,11 @@ async function getLedgerEnd(party: string): Promise<number> {
   return res.data.offset ?? 0;
 }
 
-// GET /api/transfers?party=<partyId>
+// GET /api/transfers  (optional ?party= must be the caller's own party)
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const party = req.query.party as string | undefined;
-    if (!party) {
-      res.status(400).json({ status: false, code: 400, message: 'party query param required', data: null });
-      return;
-    }
+    const party = resolveQueryParty(req, res);
+    if (!party) return;
 
     const offset = await getLedgerEnd(party);
     const response = await partyClient(party).post<string>(
@@ -121,7 +113,7 @@ async function exerciseTransfer(
 // POST /api/transfers/accept
 router.post('/accept', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const actingParty = getActingParty(req);
+    const actingParty = getActingParty(res);
     const { transferContractId } = req.body as { transferContractId: string };
     const txId = await exerciseTransfer(actingParty, transferContractId, 'AcceptTransfer');
     res.json({ status: true, code: 200, message: 'Transfer accepted', data: { transactionId: txId } });
@@ -133,7 +125,7 @@ router.post('/accept', async (req: Request, res: Response, next: NextFunction) =
 // POST /api/transfers/reject
 router.post('/reject', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const actingParty = getActingParty(req);
+    const actingParty = getActingParty(res);
     const { transferContractId } = req.body as { transferContractId: string };
     const txId = await exerciseTransfer(actingParty, transferContractId, 'RejectTransfer');
     res.json({ status: true, code: 200, message: 'Transfer rejected', data: { transactionId: txId } });
