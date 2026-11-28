@@ -21,9 +21,10 @@ pnpm install
 |---|---|---|
 | `APP_ENVIRONMENT` | `local` | `local` targets `localhost:7575`; `production` targets Tenzro devnet |
 | `PORT` | `4000` | HTTP port the server listens on |
-| `CANTON_JWT_SECRET` | `supersecret` | HS256 secret — must match sandbox if auth is enabled |
+| `CANTON_JWT_SECRET` | — | HS256 secret used to mint ledger tokens. Required (and must not be `supersecret`) when `APP_ENVIRONMENT` is not `local` and `TENZRO_API_KEY` is unset; the server refuses to start otherwise |
 | `TENZRO_API_KEY` | — | Bearer token for production Tenzro devnet |
 | `CORS_ORIGIN` | `http://localhost:3000` | Allowed CORS origin |
+| `PARTY_API_KEYS` | — (required) | `<key>=<partyId>` pairs, comma separated. Each API key acts as exactly one ledger party. Generate keys with `openssl rand -hex 24` (16+ characters) |
 
 ## Development
 
@@ -37,21 +38,31 @@ Server starts on `http://localhost:4000` with hot reload via `ts-node-dev`.
 
 All responses follow `{ status, code, message, data }`.
 
-| Method | Path | Header | Description |
-|---|---|---|---|
-| GET | `/api/parties` | — | List all ledger parties |
-| GET | `/api/ious?party=<id>` | — | Active IOUs for a party |
-| POST | `/api/ious/issue` | `x-acting-party` | Issue a new IOU (Bank only) |
-| POST | `/api/ious/split` | `x-acting-party` | Split an IOU into two |
-| POST | `/api/ious/merge` | `x-acting-party` | Merge two IOUs into one |
-| POST | `/api/ious/propose-transfer` | `x-acting-party` | Propose ownership transfer |
-| GET | `/api/transfers?party=<id>` | — | Pending incoming transfers for a party |
-| POST | `/api/transfers/accept` | `x-acting-party` | Accept a transfer |
-| POST | `/api/transfers/reject` | `x-acting-party` | Reject a transfer |
+Every request needs an `x-api-key` header. The server looks the key up in `PARTY_API_KEYS` and acts as that party only. The old `x-acting-party` header is ignored, and `?party=` on the GET routes is optional and must match the key's own party (403 otherwise).
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/me` | The party this API key acts as |
+| GET | `/api/parties` | List all ledger parties |
+| GET | `/api/ious` | Active IOUs for the caller's party |
+| POST | `/api/ious/issue` | Issue a new IOU (Bank only) |
+| POST | `/api/ious/split` | Split an IOU into two |
+| POST | `/api/ious/merge` | Merge two IOUs into one |
+| POST | `/api/ious/propose-transfer` | Propose ownership transfer |
+| GET | `/api/transfers` | Pending incoming transfers for the caller's party |
+| POST | `/api/transfers/accept` | Accept a transfer |
+| POST | `/api/transfers/reject` | Reject a transfer |
+
+### Demo setup (Bank, Alice, Bob)
+
+1. Start the sandbox and note the three party ids (`daml ledger list-parties`, or the sandbox log).
+2. Generate one key per party and put them in `.env`:
+   `PARTY_API_KEYS=<bankKey>=Bank::1220...,<aliceKey>=Alice::1220...,<bobKey>=Bob::1220...`
+3. In iou-fe, paste a key under **Add API key** to act as that party. Add all three keys in one browser to switch parties from the dropdown, as before.
 
 ## Production
 
-Set `APP_ENVIRONMENT=production` and `TENZRO_API_KEY=<your-key>` in `.env`, then:
+Set `APP_ENVIRONMENT=production`, `TENZRO_API_KEY=<your-key>` (or a strong `CANTON_JWT_SECRET`) and `PARTY_API_KEYS` in `.env`, then:
 
 ```bash
 pnpm build

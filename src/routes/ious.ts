@@ -1,15 +1,10 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { randomUUID } from 'crypto';
 import { partyClient } from '../canton/client';
+import { getActingParty, resolveQueryParty } from '../middleware/auth';
 
 const router = Router();
 const TEMPLATE_IOU = '#daml-example:Apps.Iou:Iou';
-
-function getActingParty(req: Request): string {
-  const party = req.headers['x-acting-party'] as string | undefined;
-  if (!party) throw new Error('Missing x-acting-party header');
-  return party;
-}
 
 function parseNdjson(raw: string): unknown[] {
   return raw
@@ -30,14 +25,11 @@ async function getLedgerEnd(party: string): Promise<number> {
   return res.data.offset ?? 0;
 }
 
-// GET /api/ious?party=<partyId>
+// GET /api/ious  (optional ?party= must be the caller's own party)
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const party = req.query.party as string | undefined;
-    if (!party) {
-      res.status(400).json({ status: false, code: 400, message: 'party query param required', data: null });
-      return;
-    }
+    const party = resolveQueryParty(req, res);
+    if (!party) return;
 
     const offset = await getLedgerEnd(party);
     const response = await partyClient(party).post<string>(
@@ -91,7 +83,7 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
 // POST /api/ious/issue
 router.post('/issue', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const actingParty = getActingParty(req);
+    const actingParty = getActingParty(res);
     const { issuer, owner, amount } = req.body as { issuer: string; owner: string; amount: string };
 
     const response = await partyClient(actingParty).post('/commands/submit-and-wait-for-transaction', {
@@ -150,7 +142,7 @@ async function exerciseIou(
 // POST /api/ious/split
 router.post('/split', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const actingParty = getActingParty(req);
+    const actingParty = getActingParty(res);
     const { contractId, splitAmount } = req.body as { contractId: string; splitAmount: string };
     const txId = await exerciseIou(actingParty, contractId, 'Split', { splitAmount: String(splitAmount) });
     res.json({ status: true, code: 200, message: 'Split successful', data: { transactionId: txId } });
@@ -162,7 +154,7 @@ router.post('/split', async (req: Request, res: Response, next: NextFunction) =>
 // POST /api/ious/merge
 router.post('/merge', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const actingParty = getActingParty(req);
+    const actingParty = getActingParty(res);
     const { contractId, otherContractId } = req.body as { contractId: string; otherContractId: string };
     const txId = await exerciseIou(actingParty, contractId, 'Merge', { otherCid: otherContractId });
     res.json({ status: true, code: 200, message: 'Merge successful', data: { transactionId: txId } });
@@ -174,7 +166,7 @@ router.post('/merge', async (req: Request, res: Response, next: NextFunction) =>
 // POST /api/ious/propose-transfer
 router.post('/propose-transfer', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const actingParty = getActingParty(req);
+    const actingParty = getActingParty(res);
     const { contractId, newOwner } = req.body as { contractId: string; newOwner: string };
     const txId = await exerciseIou(actingParty, contractId, 'ProposeTransfer', { newOwner });
     res.json({ status: true, code: 200, message: 'Transfer proposed', data: { transactionId: txId } });
